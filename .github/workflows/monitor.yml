@@ -1,0 +1,34 @@
+name: Pekora 24/7 Monitor
+
+on:
+  schedule:
+    # Запуск каждые 2 минуты
+    - cron: '*/2 * * * *'
+  # Ручной запуск
+  workflow_dispatch:
+  # Запуск при изменениях в коде
+  push:
+    branches: [ main ]
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🟢 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        
+    - name: 📦 Install dependencies
+      run: npm install
+      
+    - name: 🎯 Run Pekora Monitor
+      run: node monitor.js
+      env:
+        DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        LAST_ITEM_ID: ${{ secrets.LAST_ITEM_ID }}
