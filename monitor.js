@@ -1,8 +1,33 @@
 const https = require('https');
+const fs = require('fs');
+const path = require('path');
 
 const DISCORD_WEBHOOK = process.env.DISCORD_WEBHOOK;
-const LAST_ITEM_ID = process.env.LAST_ITEM_ID;
-let currentLastId = LAST_ITEM_ID;
+const DATA_FILE = path.join(process.env.GITHUB_WORKSPACE || __dirname, 'last-item.txt');
+
+// Функция для чтения последнего ID из файла
+function readLastItemId() {
+    try {
+        if (fs.existsSync(DATA_FILE)) {
+            return fs.readFileSync(DATA_FILE, 'utf8').trim();
+        }
+    } catch (error) {
+        console.log('❌ Ошибка чтения файла:', error.message);
+    }
+    return null;
+}
+
+// Функция для сохранения последнего ID в файл
+function saveLastItemId(itemId) {
+    try {
+        fs.writeFileSync(DATA_FILE, itemId.toString());
+        console.log(`💾 ID сохранен в файл: ${itemId}`);
+        return true;
+    } catch (error) {
+        console.log('❌ Ошибка сохранения файла:', error.message);
+        return false;
+    }
+}
 
 // Функция для отправки запросов
 function makeRequest(options, postData = null) {
@@ -16,9 +41,13 @@ function makeRequest(options, postData = null) {
             
             res.on('end', () => {
                 try {
-                    resolve(JSON.parse(data));
+                    if (res.statusCode >= 200 && res.statusCode < 300) {
+                        resolve(JSON.parse(data));
+                    } else {
+                        reject(new Error(`HTTP ${res.statusCode}: ${data}`));
+                    }
                 } catch (e) {
-                    resolve(data);
+                    reject(new Error(`Parse error: ${e.message}`));
                 }
             });
         });
@@ -71,11 +100,6 @@ async function sendDiscordNotification(item) {
                 name: "📊 Продано копий",
                 value: item.saleCount ? item.saleCount.toLocaleString() : "0",
                 inline: true
-            },
-            {
-                name: "🔄 В продаже",
-                value: item.isForSale ? "✅ Да" : "❌ Нет",
-                inline: true
             }
         ],
         thumbnail: { url: itemImageUrl },
@@ -92,9 +116,12 @@ async function sendDiscordNotification(item) {
         embeds: [embed]
     };
 
+    // Извлекаем путь из вебхука
+    const webhookPath = DISCORD_WEBHOOK.replace('https://discord.com', '');
+
     const options = {
         hostname: 'discord.com',
-        path: '/api/webhooks/1431342479222767616/oCWPhuALqVEnH9jCmDVAfCrpgXuY2oXjpInHwiF1vb9HUivbUgMwW8kEAzsTVMXHLrl5'.replace('https://discord.com', ''),
+        path: webhookPath,
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -136,9 +163,12 @@ async function getItemDetails(itemIds) {
 
 // Основная функция мониторинга
 async function monitor() {
-    console.log('🚀 Запуск проверки...');
+    console.log('🚀 Запуск проверки Pekora...');
     console.log('⏰ Время:', new Date().toISOString());
-    console.log('📝 Текущий последний ID:', currentLastId);
+    
+    // Читаем последний ID из файла
+    const lastItemId = readLastItemId();
+    console.log('📝 Последний известный ID:', lastItemId || 'Не установлен');
 
     try {
         // Получаем список товаров
@@ -147,30 +177,32 @@ async function monitor() {
             path: '/apisite/catalog/v1/search/items?category=Collectibles&limit=5&sortType=3',
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'application/json',
-                'Referer': 'https://www.pekora.zip/'
+                'Accept': 'application/json'
             }
         };
 
+        console.log('🔍 Запрос к API...');
         const data = await makeRequest(apiOptions);
         
         if (data && data.data && data.data.length > 0) {
             const newestItem = data.data[0];
+            console.log('✅ Получены данные, первый товар ID:', newestItem.id);
 
             if (newestItem && newestItem.id) {
-                // Первый запуск
-                if (!currentLastId) {
-                    console.log(`📝 Установлен начальный ID: ${newestItem.id}`);
-                    await updateSecret('LAST_ITEM_ID', newestItem.id.toString());
+                // Первый запуск - сохраняем ID
+                if (!lastItemId) {
+                    console.log(`📝 Первый запуск! Сохраняем ID: ${newestItem.id}`);
+                    saveLastItemId(newestItem.id);
                     return;
                 }
 
                 // Проверяем новый товар
-                if (newestItem.id.toString() !== currentLastId) {
+                if (newestItem.id.toString() !== lastItemId) {
                     console.log(`🎉 ОБНАРУЖЕН НОВЫЙ ТОВАР!`);
-                    console.log(`📋 Старый ID: ${currentLastId} → Новый ID: ${newestItem.id}`);
+                    console.log(`📋 Старый ID: ${lastItemId} → Новый ID: ${newestItem.id}`);
 
                     // Получаем детали
+                    console.log('🔄 Получаем детальную информацию...');
                     const detailedItems = await getItemDetails([newestItem.id]);
                     const fullItemData = detailedItems[0] || newestItem;
 
@@ -178,29 +210,31 @@ async function monitor() {
                     console.log(`💰 Цена: ${fullItemData.price || 'Бесплатно'}`);
 
                     // Отправляем уведомление
+                    console.log('📤 Отправляем уведомление в Discord...');
                     const success = await sendDiscordNotification(fullItemData);
                     
                     if (success) {
-                        currentLastId = newestItem.id.toString();
-                        await updateSecret('LAST_ITEM_ID', currentLastId);
-                        console.log(`✅ ID обновлен: ${currentLastId}`);
+                        saveLastItemId(newestItem.id);
+                        console.log(`✅ Мониторинг обновлен! Новый ID: ${newestItem.id}`);
+                    } else {
+                        console.log('❌ Не удалось отправить уведомление, ID не обновлен');
                     }
                 } else {
                     console.log('✅ Новых товаров нет');
                 }
             }
+        } else {
+            console.log('❌ В ответе API нет данных о товарах');
         }
     } catch (error) {
         console.log('❌ Ошибка мониторинга:', error.message);
     }
-}
-
-// Функция для обновления секрета (симуляция)
-async function updateSecret(name, value) {
-    console.log(`🔐 [SIMULATION] Обновление секрета ${name} = ${value}`);
-    // В GitHub Actions секреты обновляются через GitHub API
-    // Здесь просто логируем для демонстрации
+    
+    console.log('🏁 Проверка завершена');
 }
 
 // Запуск
-monitor().catch(console.error);
+monitor().catch(error => {
+    console.error('💥 Критическая ошибка:', error);
+    process.exit(1);
+});
