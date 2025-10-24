@@ -1,0 +1,13 @@
+{
+  "name": "pekora-monitor",
+  "version": "1.0.0",
+  "description": "24/7 мониторинг новых товаров на Pekora",
+  "main": "monitor.js",
+  "scripts": {
+    "start": "node monitor.js"
+  },
+  "dependencies": {},
+  "keywords": ["pekora", "monitor", "discord"],
+  "author": "YourName",
+  "license": "MIT"
+}
