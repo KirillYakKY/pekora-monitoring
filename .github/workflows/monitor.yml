@@ -24,11 +24,7 @@ jobs:
         node-version: '18'
         cache: 'npm'
         
-    - name: 📦 Install dependencies
-      run: npm install
-      
     - name: 🎯 Run Pekora Monitor
       run: node monitor.js
       env:
         DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-        LAST_ITEM_ID: ${{ secrets.LAST_ITEM_ID }}
